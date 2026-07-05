@@ -16,7 +16,7 @@ struct rgb_color_t
 
 class BLEKeyCast {
 public:
-    static constexpr const char* VERSION = "v0.0.2";
+    static constexpr const char* VERSION = "v0.0.3";
     BLEKeyCast();
     void begin();
     void update();
