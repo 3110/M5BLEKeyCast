@@ -6,11 +6,13 @@ import re
 Import("env")  # noqa: F821
 
 firmware_dir = env.GetProjectOption("custom_firmware_dir")
+if not os.path.isabs(firmware_dir):
+    firmware_dir = os.path.join(env.subst("$PROJECT_DIR"), firmware_dir)
 if not os.path.exists(firmware_dir):
     os.makedirs(firmware_dir)
 
 firmware_version_file = env.GetProjectOption("custom_firmware_version_file")
-with open(os.path.join(env.subst("$PROJECT_SRC_DIR"), firmware_version_file), "r") as f:
+with open(os.path.join(env.subst("$PROJECT_DIR"), firmware_version_file), "r") as f:
     for line in f:
         match = re.search(r"\"v(\d+\.\d+\.\d+)\"", line)
         if match:
