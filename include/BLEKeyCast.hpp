@@ -1,12 +1,9 @@
 #pragma once
 
 #include <BleKeyboard.h>  // https://github.com/T-vK/ESP32-BLE-Keyboard
+#include <EspNowManager.h>
 #include <JC_Button.h>
 #include <Preferences.h>
-#include <WiFi.h>
-#include <esp_log.h>
-#include <esp_now.h>
-#include <esp_wifi.h>
 
 #include <string>
 
@@ -31,7 +28,8 @@ private:
     static constexpr uint8_t DEVICE_NAME_MAX_LEN = 20;
 
     BleKeyboard _bleKeyboard;
-    esp_now_peer_info_t _broadcastPeer;
+    EspNowManager _espNowManager;
+
     Button _btnA;
     uint8_t _key;
     bool _bleConnected;
@@ -46,17 +44,6 @@ private:
 
     // BLE
     void sendBleKey(uint8_t k);
-
-    // ESP-NOW
-    void initEspNow();
-    void initBroadcastPeer(uint8_t ch);
-    bool addPeer(const esp_now_peer_info_t& peer);
-    bool sendData(const esp_now_peer_info_t& peer, const uint8_t* data,
-                  size_t len);
-
-    // Wi-Fi
-    static bool setWifiChannel(uint8_t ch);
-    static void logCurrentWifiChannel();
 
     // Preferences / Config
     static std::string loadDeviceName();

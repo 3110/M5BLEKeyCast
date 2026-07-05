@@ -11,28 +11,6 @@ static const rgb_color_t COLOR_BLE_CONNECTED = {0, 0, 255};
 static const rgb_color_t COLOR_RECV_FLASH = {0, 255, 0};
 static const rgb_color_t COLOR_CONFIG_MODE = {255, 255, 0};
 
-// --- Utility ---
-
-struct MacAddressStr
-{
-    char str[ESP_NOW_ETH_ALEN * 3];
-};
-
-static MacAddressStr macToStr(const uint8_t* mac) {
-    MacAddressStr result;
-    snprintf(result.str, sizeof(result.str), "%02x:%02x:%02x:%02x:%02x:%02x",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    return result;
-}
-
-static void logEspErr(const char* context, esp_err_t err) {
-    if (err == ESP_OK) {
-        ESP_LOGD(TAG, "%s: OK", context);
-    } else {
-        ESP_LOGE(TAG, "%s: %s", context, esp_err_to_name(err));
-    }
-}
-
 // --- Static member ---
 
 BLEKeyCast* BLEKeyCast::_instance = nullptr;
@@ -83,81 +61,7 @@ void BLEKeyCast::sendBleKey(uint8_t k) {
     }
 }
 
-// --- Wi-Fi ---
-
-bool BLEKeyCast::setWifiChannel(uint8_t ch) {
-    if (ch < 1 || ch > 13) {
-        ESP_LOGE(TAG, "Invalid channel: %u", ch);
-        return false;
-    }
-
-    esp_err_t err = esp_wifi_set_promiscuous(true);
-    if (err != ESP_OK) {
-        logEspErr("set_promiscuous(true)", err);
-        return false;
-    }
-
-    err = esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-
-    const esp_err_t err2 = esp_wifi_set_promiscuous(false);
-    if (err2 != ESP_OK) {
-        logEspErr("set_promiscuous(false)", err2);
-    }
-
-    if (err != ESP_OK) {
-        logEspErr("set_channel", err);
-        return false;
-    }
-
-    return true;
-}
-
-void BLEKeyCast::logCurrentWifiChannel() {
-    uint8_t primary = 0;
-    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
-    const esp_err_t err = esp_wifi_get_channel(&primary, &second);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Wi-Fi Channel: %u", primary);
-    } else {
-        logEspErr("get_channel", err);
-    }
-}
-
-// --- ESP-NOW ---
-
-void BLEKeyCast::initEspNow() {
-    if (esp_now_init() == ESP_OK) {
-        ESP_LOGI(TAG, "ESP-NOW initialized");
-    } else {
-        ESP_LOGE(TAG, "ESP-NOW init failed, restarting...");
-        ESP.restart();
-    }
-}
-
-void BLEKeyCast::initBroadcastPeer(uint8_t ch) {
-    memset(&(this->_broadcastPeer), 0, sizeof(this->_broadcastPeer));
-    memset(this->_broadcastPeer.peer_addr, 0xFF, ESP_NOW_ETH_ALEN);
-    this->_broadcastPeer.channel = ch;
-    this->_broadcastPeer.encrypt = false;
-}
-
-bool BLEKeyCast::addPeer(const esp_now_peer_info_t& peer) {
-    if (esp_now_is_peer_exist(peer.peer_addr)) {
-        ESP_LOGW(TAG, "Peer already exists");
-        return false;
-    }
-    const esp_err_t err = esp_now_add_peer(&peer);
-    logEspErr("add_peer", err);
-    return err == ESP_OK;
-}
-
-bool BLEKeyCast::sendData(const esp_now_peer_info_t& peer, const uint8_t* data,
-                          size_t len) {
-    ESP_LOGD(TAG, "ESP-NOW Send: '%c'(0x%02X)", *data, *data);
-    const esp_err_t err = esp_now_send(peer.peer_addr, data, len);
-    logEspErr("esp_now_send", err);
-    return err == ESP_OK;
-}
+// --- ESP-NOW callbacks ---
 
 void BLEKeyCast::onDataSendCb(const uint8_t* mac,
                               esp_now_send_status_t status) {
@@ -294,6 +198,8 @@ void BLEKeyCast::enterConfigMode() {
 void BLEKeyCast::begin() {
     _instance = this;
 
+    esp_log_level_set("*", static_cast<esp_log_level_t>(LOG_LOCAL_LEVEL));
+
     pinMode(RGB_LED_PIN, OUTPUT);
     Serial.begin(SERIAL_BAUDRATE);
 
@@ -307,24 +213,12 @@ void BLEKeyCast::begin() {
 
     this->_bleKeyboard.begin();
 
-    uint8_t baseMac[ESP_NOW_ETH_ALEN];
-    esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
-    ESP_LOGI(TAG, "STA MAC: %s", macToStr(baseMac).str);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(false, true);
-    delay(100);
-
-    if (!setWifiChannel(CAST_KEY_CHANNEL)) {
-        ESP_LOGE(TAG, "Failed to set Wi-Fi channel");
+    if (!this->_espNowManager.begin()) {
+        ESP_LOGE(TAG, "Failed to initialize ESP-NOW");
+        return;
     }
-    logCurrentWifiChannel();
-
-    initEspNow();
-    initBroadcastPeer(CAST_KEY_CHANNEL);
-    addPeer(this->_broadcastPeer);
-    esp_now_register_send_cb(onDataSendCb);
-    esp_now_register_recv_cb(onDataRecvCb);
+    this->_espNowManager.registerCallback(onDataSendCb);
+    this->_espNowManager.registerCallback(onDataRecvCb);
 
     this->_key = loadKey();
 
@@ -354,7 +248,7 @@ void BLEKeyCast::update() {
 
     this->_btnA.read();
     if (this->_btnA.wasPressed()) {
-        sendData(this->_broadcastPeer, &(this->_key), sizeof(this->_key));
+        this->_espNowManager.broadcast(&(this->_key), sizeof(this->_key));
         sendBleKey(this->_key);
     }
     delay(10);
